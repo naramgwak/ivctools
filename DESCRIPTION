@@ -1,0 +1,28 @@
+Package: ivctools
+Title: IV-Compass Diagnostics for Single-Instrument Exogeneity
+Version: 0.1.0
+Authors@R:
+    person("Naram", "Gwak", email = "naram.gwak@gmail.com",
+           role = c("aut", "cre"))
+Description: Tools for the IV-Compass (IVC) diagnostic, which assesses the
+    exogeneity of a single instrument in pretest-posttest designs by comparing
+    a conventional instrumental-variable estimate with a compass-corrected
+    benchmark derived from the pretest. Provides estimation, an analytic
+    method-of-moments and bootstrap inference for the diagnostic contrast,
+    simulation-based power analysis, and visualization.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends: R (>= 4.1.0)
+Imports:
+    stats,
+    graphics
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 8.0.0
+URL: https://github.com/naramgwak/ivctools
+BugReports: https://github.com/naramgwak/ivctools/issues
+LazyData: true
