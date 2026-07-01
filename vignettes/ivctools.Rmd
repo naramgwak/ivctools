@@ -85,7 +85,11 @@ fit$ci
 fit$reject
 ```
 
-A picture often communicates the diagnostic best:
+A picture often communicates the diagnostic best. The plot is a forest plot:
+each of `tau_IV`, `tau_comp`, and `Delta` gets its own point and confidence
+interval on a common scale, so you can see at a glance whether the two
+estimates' intervals overlap. The `Delta` row is shaded and colored red when
+its interval excludes zero.
 
 ```{r plot}
 plot(fit)
