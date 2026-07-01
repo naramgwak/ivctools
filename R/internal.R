@@ -112,9 +112,13 @@
     delta_hat = as.numeric(delta_hat))
 }
 
-# Analytic method-of-moments (GMM-style) SE for Delta.
+# Analytic method-of-moments (GMM-style) SE for Delta and for each parameter.
 # Faithful to study_1_gamma_with_F.R::mom_se_delta (no-covariate case).
 # When covariates are present, moments are formed on FWL-residualized variables.
+# Returns a list: se_delta (scalar), se_params (named: delta_hat, tau_comp,
+# tau_IV), and V (the 3x3 sandwich covariance, ordered delta, tau_comp, tau_IV).
+# The individual SEs are the square roots of diag(V); for tau_IV this equals the
+# heteroskedasticity-robust (HC0) just-identified IV standard error.
 .ivc_mom_se <- function(prep, est, tol = 1e-12) {
   Y <- prep$Y; P <- prep$P; A <- prep$A; Z <- prep$Z; w <- prep$w; xmat <- prep$xmat
   Yx <- .ivc_resid_on_X(Y, xmat, w); Px <- .ivc_resid_on_X(P, xmat, w)
@@ -140,12 +144,22 @@
   gmat <- cbind(g1, g2, g3)
   S <- crossprod(gmat) / n
   Ginv <- tryCatch(solve(G), error = function(e) NULL)
-  if (is.null(Ginv) || any(!is.finite(Ginv))) return(NA_real_)
-  V <- (1 / n) * Ginv %*% S %*% t(Ginv)
-  a <- c(0, -1, 1)              # Delta = tau_IV - tau_comp
+  na3 <- c(delta_hat = NA_real_, tau_comp = NA_real_, tau_IV = NA_real_)
+  if (is.null(Ginv) || any(!is.finite(Ginv))) {
+    return(list(se_delta = NA_real_, se_params = na3, V = NULL))
+  }
+  V <- (1 / n) * Ginv %*% S %*% t(Ginv)  # order: (delta, tau_comp, tau_IV)
+  a <- c(0, -1, 1)                        # Delta = tau_IV - tau_comp
   var_delta <- as.numeric(t(a) %*% V %*% a)
-  if (!is.finite(var_delta) || var_delta < 0) return(NA_real_)
-  sqrt(var_delta)
+  # individual SEs = sqrt of the diagonal of the same sandwich matrix
+  d_var <- diag(V)
+  se_params <- c(
+    delta_hat = if (is.finite(d_var[1]) && d_var[1] >= 0) sqrt(d_var[1]) else NA_real_,
+    tau_comp  = if (is.finite(d_var[2]) && d_var[2] >= 0) sqrt(d_var[2]) else NA_real_,
+    tau_IV    = if (is.finite(d_var[3]) && d_var[3] >= 0) sqrt(d_var[3]) else NA_real_
+  )
+  se_delta <- if (is.finite(var_delta) && var_delta >= 0) sqrt(var_delta) else NA_real_
+  list(se_delta = se_delta, se_params = se_params, V = V)
 }
 
 # Adaptive percentile bootstrap for Delta.

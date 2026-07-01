@@ -16,18 +16,27 @@
 #'   partial out. Default `NULL` reproduces the covariate-free Wald estimate.
 #' @param weights Optional survey weights: either a numeric vector of length
 #'   `nrow(data)` or the name of a column in `data`.
+#' @param se If `TRUE`, returns a named vector with the estimate and its
+#'   analytic standard error (`estimate`, `se`). The standard error is the
+#'   heteroskedasticity-robust just-identified IV standard error, taken from
+#'   the diagonal of the same GMM sandwich used by [compare_iv_cv()]. Default
+#'   `FALSE` returns the point estimate only.
 #'
-#' @return A numeric scalar, the IV estimate \eqn{\widehat{\tau}_{IV}}.
+#' @return A numeric scalar (the IV estimate), or a named vector
+#'   `c(estimate, se)` when `se = TRUE`.
 #' @seealso [estimate_cv()], [compare_iv_cv()]
 #' @examples
 #' d <- ivc_simulate(n = 1000, gamma = 1, kappa = 0, seed = 1)
 #' estimate_iv(d, outcome = "Y", pretest = "P", treat = "A", instrument = "Z")
+#' estimate_iv(d, "Y", "P", "A", "Z", se = TRUE)
 #' @export
 estimate_iv <- function(data, outcome, pretest, treat, instrument,
-                        covariates = NULL, weights = NULL) {
+                        covariates = NULL, weights = NULL, se = FALSE) {
   prep <- .ivc_prepare(data, outcome, pretest, treat, instrument, covariates, weights)
   est <- .ivc_estimates(prep)
-  unname(est["tau_IV"])
+  if (!isTRUE(se)) return(unname(est["tau_IV"]))
+  s <- .ivc_mom_se(prep, est)$se_params["tau_IV"]
+  c(estimate = unname(est["tau_IV"]), se = unname(s))
 }
 
 #' Compass-corrected treatment-effect estimate
@@ -43,23 +52,35 @@ estimate_iv <- function(data, outcome, pretest, treat, instrument,
 #' violates exogeneity, provided it is a valid detection variable.
 #'
 #' @inheritParams estimate_iv
-#' @param return_delta If `TRUE`, returns a named vector with both
-#'   `tau_comp` and the loading ratio `delta_hat`. Default `FALSE`.
+#' @param return_delta If `TRUE`, includes the loading ratio `delta_hat` in the
+#'   output. Default `FALSE`.
+#' @param se If `TRUE`, includes analytic standard error(s) in the output: the
+#'   SE of `tau_comp` (and of `delta_hat` when `return_delta = TRUE`), taken
+#'   from the diagonal of the GMM sandwich used by [compare_iv_cv()].
 #'
 #' @return A numeric scalar \eqn{\widehat{\tau}_{comp}}, or a named numeric
-#'   vector when `return_delta = TRUE`.
+#'   vector when `return_delta` and/or `se` are `TRUE` (elements among
+#'   `tau_comp`, `delta_hat`, `se_tau_comp`, `se_delta_hat`).
 #' @seealso [estimate_iv()], [compare_iv_cv()]
 #' @examples
 #' d <- ivc_simulate(n = 1000, gamma = 1, kappa = 0.2, seed = 1)
 #' estimate_cv(d, outcome = "Y", pretest = "P", treat = "A",
-#'             instrument = "Z", return_delta = TRUE)
+#'             instrument = "Z", return_delta = TRUE, se = TRUE)
 #' @export
 estimate_cv <- function(data, outcome, pretest, treat, instrument,
-                        covariates = NULL, weights = NULL, return_delta = FALSE) {
+                        covariates = NULL, weights = NULL,
+                        return_delta = FALSE, se = FALSE) {
   prep <- .ivc_prepare(data, outcome, pretest, treat, instrument, covariates, weights)
   est <- .ivc_estimates(prep)
-  if (return_delta) return(est[c("tau_comp", "delta_hat")])
-  unname(est["tau_comp"])
+  if (!isTRUE(return_delta) && !isTRUE(se)) return(unname(est["tau_comp"]))
+  out <- c(tau_comp = unname(est["tau_comp"]))
+  if (isTRUE(return_delta)) out <- c(out, delta_hat = unname(est["delta_hat"]))
+  if (isTRUE(se)) {
+    sp <- .ivc_mom_se(prep, est)$se_params
+    out <- c(out, se_tau_comp = unname(sp["tau_comp"]))
+    if (isTRUE(return_delta)) out <- c(out, se_delta_hat = unname(sp["delta_hat"]))
+  }
+  out
 }
 
 #' Compare IV and compass estimates: the IV-Compass (IVC) exogeneity diagnostic
@@ -109,8 +130,12 @@ compare_iv_cv <- function(data, outcome, pretest, treat, instrument,
   Delta <- unname(est["Delta"])
   z_crit <- stats::qnorm(1 - (1 - level) / 2)
 
+  # analytic individual SEs (always available; RNG-free)
+  mom <- .ivc_mom_se(prep, est)
+  se_params <- mom$se_params
+
   if (se == "mom") {
-    se_val <- .ivc_mom_se(prep, est)
+    se_val <- mom$se_delta
     ci <- c(Delta - z_crit * se_val, Delta + z_crit * se_val)
     p_value <- 2 * stats::pnorm(-abs(Delta / se_val))
     reps <- NA_integer_
@@ -132,6 +157,9 @@ compare_iv_cv <- function(data, outcome, pretest, treat, instrument,
     tau_IV = unname(est["tau_IV"]),
     tau_comp = unname(est["tau_comp"]),
     delta_hat = unname(est["delta_hat"]),
+    se_tau_IV = unname(se_params["tau_IV"]),
+    se_tau_comp = unname(se_params["tau_comp"]),
+    se_delta_hat = unname(se_params["delta_hat"]),
     Delta = Delta, se = se_val, ci = ci, p_value = p_value,
     reject = reject, method = se, level = level,
     n = prep$n, boot_reps = reps, call = cl

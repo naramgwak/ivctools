@@ -11,7 +11,8 @@ estimate_iv(
   treat,
   instrument,
   covariates = NULL,
-  weights = NULL
+  weights = NULL,
+  se = FALSE
 )
 }
 \arguments{
@@ -31,9 +32,16 @@ partial out. Default \code{NULL} reproduces the covariate-free Wald estimate.}
 
 \item{weights}{Optional survey weights: either a numeric vector of length
 \code{nrow(data)} or the name of a column in \code{data}.}
+
+\item{se}{If \code{TRUE}, returns a named vector with the estimate and its
+analytic standard error (\code{estimate}, \code{se}). The standard error is the
+heteroskedasticity-robust just-identified IV standard error, taken from
+the diagonal of the same GMM sandwich used by \code{\link[=compare_iv_cv]{compare_iv_cv()}}. Default
+\code{FALSE} returns the point estimate only.}
 }
 \value{
-A numeric scalar, the IV estimate \eqn{\widehat{\tau}_{IV}}.
+A numeric scalar (the IV estimate), or a named vector
+\code{c(estimate, se)} when \code{se = TRUE}.
 }
 \description{
 Computes the just-identified instrumental-variable estimate of a treatment
@@ -45,6 +53,7 @@ squares (Frisch-Waugh-Lovell) before the ratio is formed.
 \examples{
 d <- ivc_simulate(n = 1000, gamma = 1, kappa = 0, seed = 1)
 estimate_iv(d, outcome = "Y", pretest = "P", treat = "A", instrument = "Z")
+estimate_iv(d, "Y", "P", "A", "Z", se = TRUE)
 }
 \seealso{
 \code{\link[=estimate_cv]{estimate_cv()}}, \code{\link[=compare_iv_cv]{compare_iv_cv()}}

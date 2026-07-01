@@ -1,8 +1,12 @@
 #' @export
 print.ivc <- function(x, ...) {
   cat("IV-Compass (IVC) exogeneity diagnostic\n")
-  cat(sprintf("  tau_IV   = %.4f\n", x$tau_IV))
-  cat(sprintf("  tau_comp = %.4f   (delta_hat = %.4f)\n", x$tau_comp, x$delta_hat))
+  cat(sprintf("  tau_IV   = %.4f   (SE = %s)\n", x$tau_IV,
+              ifelse(is.finite(x$se_tau_IV), sprintf("%.4f", x$se_tau_IV), "NA")))
+  cat(sprintf("  tau_comp = %.4f   (SE = %s)\n", x$tau_comp,
+              ifelse(is.finite(x$se_tau_comp), sprintf("%.4f", x$se_tau_comp), "NA")))
+  cat(sprintf("  delta_hat= %.4f   (SE = %s)\n", x$delta_hat,
+              ifelse(is.finite(x$se_delta_hat), sprintf("%.4f", x$se_delta_hat), "NA")))
   cat(sprintf("  Delta    = %.4f   (SE = %s)\n", x$Delta,
               ifelse(is.finite(x$se), sprintf("%.4f", x$se), "NA")))
   cat(sprintf("  %.0f%% CI = [%.4f, %.4f]   p = %s\n",

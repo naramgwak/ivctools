@@ -21,8 +21,9 @@ Suggests:
     knitr,
     rmarkdown
 Config/testthat/edition: 3
+VignetteBuilder: knitr
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 8.0.0
 URL: https://github.com/naramgwak/ivctools
 BugReports: https://github.com/naramgwak/ivctools/issues
 LazyData: true
+Config/roxygen2/version: 8.0.0

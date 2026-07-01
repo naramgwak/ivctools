@@ -12,7 +12,8 @@ estimate_cv(
   instrument,
   covariates = NULL,
   weights = NULL,
-  return_delta = FALSE
+  return_delta = FALSE,
+  se = FALSE
 )
 }
 \arguments{
@@ -33,12 +34,17 @@ partial out. Default \code{NULL} reproduces the covariate-free Wald estimate.}
 \item{weights}{Optional survey weights: either a numeric vector of length
 \code{nrow(data)} or the name of a column in \code{data}.}
 
-\item{return_delta}{If \code{TRUE}, returns a named vector with both
-\code{tau_comp} and the loading ratio \code{delta_hat}. Default \code{FALSE}.}
+\item{return_delta}{If \code{TRUE}, includes the loading ratio \code{delta_hat} in the
+output. Default \code{FALSE}.}
+
+\item{se}{If \code{TRUE}, includes analytic standard error(s) in the output: the
+SE of \code{tau_comp} (and of \code{delta_hat} when \code{return_delta = TRUE}), taken
+from the diagonal of the GMM sandwich used by \code{\link[=compare_iv_cv]{compare_iv_cv()}}.}
 }
 \value{
 A numeric scalar \eqn{\widehat{\tau}_{comp}}, or a named numeric
-vector when \code{return_delta = TRUE}.
+vector when \code{return_delta} and/or \code{se} are \code{TRUE} (elements among
+\code{tau_comp}, \code{delta_hat}, \code{se_tau_comp}, \code{se_delta_hat}).
 }
 \description{
 Computes the compass (detection-variable corrected) estimate
@@ -54,7 +60,7 @@ violates exogeneity, provided it is a valid detection variable.
 \examples{
 d <- ivc_simulate(n = 1000, gamma = 1, kappa = 0.2, seed = 1)
 estimate_cv(d, outcome = "Y", pretest = "P", treat = "A",
-            instrument = "Z", return_delta = TRUE)
+            instrument = "Z", return_delta = TRUE, se = TRUE)
 }
 \seealso{
 \code{\link[=estimate_iv]{estimate_iv()}}, \code{\link[=compare_iv_cv]{compare_iv_cv()}}

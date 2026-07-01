@@ -1,0 +1,182 @@
+---
+title: "Getting started with ivctools: diagnosing single-instrument exogeneity"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started with ivctools}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4)
+```
+
+## 1. When is this package for you?
+
+`ivctools` is for a specific but common situation in education and the social
+sciences: you have a **pretest--posttest design**, you want to estimate the
+causal effect of a treatment, and you are relying on a **single instrumental
+variable** whose exogeneity you cannot fully defend.
+
+You should consider the IVC diagnostic if you can identify four things in your
+data:
+
+- an **outcome** measured after treatment (the posttest, `Y`),
+- a **pretest** measured before treatment (`P`),
+- a **treatment** indicator or dose (`A`),
+- a candidate **instrument** (`Z`) that you hope affects `Y` only through `A`.
+
+Standard overidentification tests (Sargan, Hansen J) cannot help here: they
+need *two or more* instruments. The IVC diagnostic instead uses the pretest as
+a built-in benchmark, so it works with a single instrument.
+
+```{r setup}
+library(ivctools)
+```
+
+## 2. The idea in one paragraph
+
+If the instrument `Z` is valid, two different estimates of the treatment effect
+should agree: the conventional IV estimate (`tau_IV`) and a *compass-corrected*
+estimate built from the pretest (`tau_comp`). Their difference,
+`Delta = tau_IV - tau_comp`, has expectation zero under a valid instrument. A
+confidence interval for `Delta` that **excludes zero** is evidence that `Z`
+violates exogeneity. Crucially, `tau_comp` remains a valid estimate of the
+effect even when `Z` is invalid, so the gap between the two is informative.
+
+## 3. A first analysis
+
+The package ships with a small simulated dataset, `ivc_example`, which has a
+mild exogeneity violation built in.
+
+```{r data}
+data(ivc_example)
+head(ivc_example)
+```
+
+Run the diagnostic with one call. Give it the data frame and the column names.
+
+```{r first-fit}
+fit <- compare_iv_cv(ivc_example,
+                     outcome = "Y", pretest = "P",
+                     treat = "A", instrument = "Z",
+                     se = "mom")
+fit
+```
+
+## 4. Reading the output
+
+Each quantity now reports its own standard error:
+
+- **`tau_IV`** -- the conventional IV estimate. Biased if `Z` is invalid.
+- **`tau_comp`** -- the compass-corrected estimate. Your best point estimate of
+  the effect whether or not `Z` is valid.
+- **`delta_hat`** -- the loading ratio used in the correction.
+- **`Delta`** and its CI -- the diagnostic itself. If the CI excludes 0, the
+  conclusion line flags evidence against exogeneity.
+
+You can pull any value out directly; the fitted object is a plain list.
+
+```{r extract}
+fit$tau_comp
+fit$se_tau_comp
+fit$Delta
+fit$ci
+fit$reject
+```
+
+A picture often communicates the diagnostic best:
+
+```{r plot}
+plot(fit)
+```
+
+## 5. Individual estimates and their standard errors
+
+If you only want one estimate with its standard error, use the single-estimate
+functions with `se = TRUE`.
+
+```{r individual}
+estimate_iv(ivc_example, "Y", "P", "A", "Z", se = TRUE)
+estimate_cv(ivc_example, "Y", "P", "A", "Z", return_delta = TRUE, se = TRUE)
+```
+
+## 6. Covariates and survey weights
+
+Real data usually need controls and, for complex samples, weights. Supply them
+by column name.
+
+```{r covariates, eval = FALSE}
+compare_iv_cv(my_data,
+              outcome = "posttest", pretest = "pretest",
+              treat = "catholic", instrument = "z",
+              covariates = c("female", "ses", "region"),
+              weights = "survey_weight",
+              se = "mom")
+```
+
+Covariates are handled by Frisch--Waugh--Lovell partialling: the outcome,
+pretest, treatment, and instrument are residualized on the covariates before
+the estimators are applied. With neither `covariates` nor `weights`, the
+results reduce **exactly** to the covariate-free forms.
+
+## 7. How the estimates and standard errors are computed
+
+This section is for readers who want to know exactly what runs.
+
+**Point estimates are computed from formulas, not from `ivreg` or other
+packages.** The IV estimate is the just-identified Wald ratio,
+`cov(Z, Y) / cov(Z, A)` (weighted, and after partialling covariates when
+present). The compass estimate residualizes `Z`, `Y`, and `P` on `A` to obtain
+the loading ratio `delta_hat`, forms the corrected outcome `Y* = Y - delta_hat *
+P`, and regresses `Y*` on `A`. Depending only on base R keeps the package light
+and its behavior transparent.
+
+**Standard errors come from a single method-of-moments (GMM) sandwich.** Three
+moment conditions identify `delta_hat`, `tau_comp`, and `tau_IV` jointly; the
+sandwich covariance of the three is computed once. The SE of `Delta` is the
+square root of `a' V a` with `a = (0, -1, 1)`, and each **individual** SE is the
+square root of the corresponding diagonal entry of the same `V`. Because they
+share one covariance matrix, the individual SEs and the `Delta` SE are mutually
+consistent. For `tau_IV` this SE equals the heteroskedasticity-robust (HC0)
+standard error of a just-identified IV estimator.
+
+For `Delta` you may instead request a **bootstrap** interval (`se =
+"bootstrap"`), which resamples rows and recomputes `Delta`. The analytic and
+bootstrap SEs agree up to Monte Carlo error.
+
+```{r bootstrap}
+compare_iv_cv(ivc_example, "Y", "P", "A", "Z",
+              se = "bootstrap", n_boot = 2000, seed = 1)
+```
+
+## 8. A caution: weak instruments
+
+The diagnostic needs a **relevant** instrument. If `Z` barely moves `A`, the
+correction becomes unstable and the standard errors blow up, so `Delta` will
+look "not significant" simply because nothing can be estimated precisely. That
+is not evidence of a valid instrument.
+
+```{r weak}
+d_weak <- ivc_simulate(n = 300, gamma = 0.05, kappa = 0.2, seed = 3)
+compare_iv_cv(d_weak, "Y", "P", "A", "Z", se = "mom")
+```
+
+Notice the very wide interval. **Non-rejection is never proof of validity**; it
+is only informative when the instrument is relevant. Check instrument strength
+(e.g. the first-stage relationship between `Z` and `A`) before trusting a
+non-rejection.
+
+## 9. Planning a study
+
+Before committing to an instrument, you can ask whether a given design could
+even detect a violation, using `ivc_power()`.
+
+```{r power}
+ivc_power(n = 1000, gamma = 1, kappa = 0.2, n_rep = 100, se = "mom", seed = 7)
+```
+
+Set `kappa = 0` to read off the empirical Type I error rate instead. Note that
+`ivc_simulate()` and `ivc_power()` are tools for **method checking and
+teaching** -- they need the true violation strength `kappa`, which real data
+never reveal. For an actual analysis you use `compare_iv_cv()` only.
