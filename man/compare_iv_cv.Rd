@@ -15,7 +15,8 @@ compare_iv_cv(
   se = c("bootstrap", "mom"),
   level = 0.95,
   n_boot = 2000,
-  seed = NULL
+  seed = NULL,
+  cluster = NULL
 )
 }
 \arguments{
@@ -46,6 +47,11 @@ method-of-moments standard error with a normal interval).}
 \code{se = "bootstrap"}). Default \code{2000}.}
 
 \item{seed}{Optional integer seed for reproducible bootstrap resampling.}
+
+\item{cluster}{Optional cluster identifier (column name or vector), e.g.
+school. With \code{se = "mom"} a cluster-robust sandwich is used; with
+\code{se = "bootstrap"} whole clusters are resampled (Lee & Kim, 2026,
+JEEV 39(2)). Point estimates are unaffected.}
 }
 \value{
 An object of class \code{"ivc"}: a list with elements \code{tau_IV},

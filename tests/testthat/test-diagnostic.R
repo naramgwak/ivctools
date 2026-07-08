@@ -5,7 +5,7 @@ test_that("compare_iv_cv returns a well-formed ivc object", {
   expect_named(fit, c("tau_IV","tau_comp","delta_hat",
                       "se_tau_IV","se_tau_comp","se_delta_hat",
                       "Delta","se","ci","p_value","reject","method",
-                      "level","n","boot_reps","call"))
+                      "level","n","n_clusters","boot_reps","call"))
   expect_equal(fit$Delta, fit$tau_IV - fit$tau_comp, tolerance = 1e-12)
   expect_length(fit$ci, 2)
 })
@@ -45,10 +45,14 @@ test_that("individual SEs are exposed, consistent, and stable", {
 
   expect_true(all(is.finite(c(f$se_tau_IV, f$se_tau_comp, f$se_delta_hat))))
 
+  # Snapshot values regenerated 2026-07 after the moment-centering bug fix in
+  # .ivc_mom_se (intercept was omitted from the tau_comp / tau_IV moments;
+  # see internal.R). Changes from the old snapshots are < 1e-4 here because
+  # A and Z are near mean-zero in this DGP.
   expect_equal(f$Delta,        0.1986041184, tolerance = 1e-6)
-  expect_equal(f$se,           0.0364280005, tolerance = 1e-6)
-  expect_equal(f$se_tau_IV,    0.0219808395, tolerance = 1e-6)
-  expect_equal(f$se_tau_comp,  0.0431913709, tolerance = 1e-6)
+  expect_equal(f$se,           0.0364355368, tolerance = 1e-6)
+  expect_equal(f$se_tau_IV,    0.0219833661, tolerance = 1e-6)
+  expect_equal(f$se_tau_comp,  0.0432005287, tolerance = 1e-6)
   expect_equal(f$se_delta_hat, 0.1117883589, tolerance = 1e-6)
 
   ei <- estimate_iv(d, "Y", "P", "A", "Z", se = TRUE)
@@ -57,5 +61,6 @@ test_that("individual SEs are exposed, consistent, and stable", {
   Zc <- d$Z - mean(d$Z); Ac <- d$A - mean(d$A); Yc <- d$Y - mean(d$Y)
   tiv <- sum(Zc * Yc) / sum(Zc * Ac); u <- Yc - tiv * Ac
   hc0 <- sqrt(sum(Zc^2 * u^2) / (sum(Zc * Ac))^2)
-  expect_equal(f$se_tau_IV, hc0, tolerance = 1e-3)
+  # exact match after the centering fix (previously only ~1e-3 agreement)
+  expect_equal(f$se_tau_IV, hc0, tolerance = 1e-10)
 })

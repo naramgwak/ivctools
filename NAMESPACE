@@ -2,11 +2,13 @@
 
 S3method(plot,ivc)
 S3method(print,ivc)
+S3method(print,ivc_cli)
 S3method(print,ivc_power)
 S3method(summary,ivc)
 export(compare_iv_cv)
 export(estimate_cv)
 export(estimate_iv)
+export(ivc_cli_test)
 export(ivc_plot)
 export(ivc_power)
 export(ivc_simulate)

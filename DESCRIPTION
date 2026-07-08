@@ -1,6 +1,6 @@
 Package: ivctools
 Title: IV-Compass Diagnostics for Single-Instrument Exogeneity
-Version: 0.1.0
+Version: 0.2.0
 Authors@R:
     person("Naram", "Gwak", email = "naram.gwak@gmail.com",
            role = c("aut", "cre"))
@@ -14,6 +14,7 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Depends: R (>= 4.1.0)
 Imports:
+    utils,
     stats,
     graphics,
     grDevices

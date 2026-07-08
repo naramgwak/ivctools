@@ -35,8 +35,11 @@
 }
 
 # Extract and validate the core analysis variables into a clean numeric frame.
+# `cluster` (optional): column name or a vector of cluster ids (e.g., school),
+# used only for cluster-robust variance / cluster bootstrap (Lee & Kim, 2026,
+# JEEV 39(2)); it never changes the point estimates.
 .ivc_prepare <- function(data, outcome, pretest, treat, instrument,
-                         covariates = NULL, weights = NULL) {
+                         covariates = NULL, weights = NULL, cluster = NULL) {
   req <- c(outcome, pretest, treat, instrument)
   miss <- setdiff(req, names(data))
   if (length(miss) > 0L) {
@@ -57,14 +60,26 @@
     if (length(w) != nrow(data)) stop("weights length must equal nrow(data).", call. = FALSE)
   }
 
+  if (is.null(cluster)) {
+    cl_id <- NULL
+  } else if (length(cluster) == 1L && is.character(cluster)) {
+    if (!cluster %in% names(data)) stop("cluster column not found: ", cluster, call. = FALSE)
+    cl_id <- data[[cluster]]
+  } else {
+    cl_id <- cluster
+    if (length(cl_id) != nrow(data)) stop("cluster length must equal nrow(data).", call. = FALSE)
+  }
+
   xmat <- .ivc_build_xmat(data, covariates)
 
   # complete-case across everything used
   parts <- list(Y, P, A, Z, w)
   cc <- Reduce(`&`, lapply(parts, is.finite))
   if (!is.null(xmat)) cc <- cc & stats::complete.cases(xmat)
+  if (!is.null(cl_id)) cc <- cc & !is.na(cl_id)
   list(Y = Y[cc], P = P[cc], A = A[cc], Z = Z[cc], w = w[cc],
        xmat = if (is.null(xmat)) NULL else xmat[cc, , drop = FALSE],
+       cluster = if (is.null(cl_id)) NULL else cl_id[cc],
        n = sum(cc))
 }
 
@@ -131,20 +146,49 @@
   Yr <- stats::residuals(stats::lm.wfit(Aonly, Yx, w))
   Pr <- stats::residuals(stats::lm.wfit(Aonly, Px, w))
 
-  g1 <- Zr * (Yr - delta * Pr)
-  g2 <- Ax * (Yx - delta * Px - tau_c * Ax)
-  g3 <- Zx * (Yx - tiv * Ax)
+  # BUG FIX (2026-07): the tau_comp and tau_IV moments must be centered.
+  # tau_comp comes from a regression WITH an intercept and tau_IV from a
+  # covariance (Wald) ratio, so their influence functions use the demeaned
+  # A and Z. The old g2 = Ax * (...), g3 = Zx * (...) were the moments of
+  # no-intercept estimators; the error was invisible in the original
+  # simulations only because A and Z there had mean zero, but it distorts
+  # the sandwich for binary treatments (mean != 0), which is the standard
+  # pretest-posttest design of Lee & Kim (2026, JEEV 39(2)). Weights are now
+  # also carried into the moments so weighted SEs are correct.
+  sw <- sum(w)
+  Ac <- Ax - sum(w * Ax) / sw
+  Zc <- Zx - sum(w * Zx) / sw
+  r2 <- stats::residuals(stats::lm.wfit(Aonly, Yx - delta * Px, w))
+  Yc <- Yx - sum(w * Yx) / sw
+
+  g1 <- w * Zr * (Yr - delta * Pr)
+  g2 <- w * Ac * r2
+  g3 <- w * Zc * (Yc - tiv * Ac)
 
   G <- matrix(0, 3, 3)
-  G[1, 1] <- -mean(Zr * Pr)
-  G[2, 1] <- -mean(Ax * Px)
-  G[2, 2] <- -mean(Ax^2)
-  G[3, 3] <- -mean(Zx * Ax)
+  G[1, 1] <- -mean(w * Zr * Pr)
+  G[2, 1] <- -mean(w * Ac * Px)
+  G[2, 2] <- -mean(w * Ac * Ax)
+  G[3, 3] <- -mean(w * Zc * Ax)
 
-  gmat <- cbind(g1, g2, g3)
-  S <- crossprod(gmat) / n
-  Ginv <- tryCatch(solve(G), error = function(e) NULL)
   na3 <- c(delta_hat = NA_real_, tau_comp = NA_real_, tau_IV = NA_real_)
+  gmat <- cbind(g1, g2, g3)
+  if (is.null(prep$cluster)) {
+    S <- crossprod(gmat) / n
+  } else {
+    # Cluster-robust meat: sum moment contributions within clusters, then take
+    # the outer product of cluster sums (Lee & Kim, 2026, JEEV 39(2), eq. 42-43).
+    # DECISION (provisional): asymptotic form, faithful to the paper -- no
+    # finite-sample df correction such as G/(G-1); revisit if small-G designs
+    # (G < ~40 clusters) become a target use case (Cameron & Miller, 2015).
+    gc <- rowsum(gmat, group = prep$cluster, reorder = FALSE)
+    if (nrow(gc) < 2L) {
+      warning("fewer than 2 clusters; cluster-robust SE is undefined.", call. = FALSE)
+      return(list(se_delta = NA_real_, se_params = na3, V = NULL))
+    }
+    S <- crossprod(gc) / n
+  }
+  Ginv <- tryCatch(solve(G), error = function(e) NULL)
   if (is.null(Ginv) || any(!is.finite(Ginv))) {
     return(list(se_delta = NA_real_, se_params = na3, V = NULL))
   }
@@ -162,23 +206,51 @@
   list(se_delta = se_delta, se_params = se_params, V = V)
 }
 
+# Weak-loading diagnostic for the compass ratio delta = b_Y / b_P.
+# The denominator moment is m_i = w_i * Pr_i * Zr_i (i.e., cov(P, Z | A));
+# returns an approximate z statistic for sum(m) = 0. Small |z| means the
+# ratio estimator and its SE are unstable (regularity condition in Lee & Kim,
+# 2026, JEEV 39(2), section III.1).
+.ivc_loading_z <- function(prep) {
+  Yx <- .ivc_resid_on_X(prep$Y, prep$xmat, prep$w)
+  Px <- .ivc_resid_on_X(prep$P, prep$xmat, prep$w)
+  Ax <- .ivc_resid_on_X(prep$A, prep$xmat, prep$w)
+  Zx <- .ivc_resid_on_X(prep$Z, prep$xmat, prep$w)
+  Aonly <- cbind(1, Ax)
+  Zr <- stats::residuals(stats::lm.wfit(Aonly, Zx, prep$w))
+  Pr <- stats::residuals(stats::lm.wfit(Aonly, Px, prep$w))
+  m <- prep$w * Pr * Zr
+  s <- stats::sd(m)
+  if (!is.finite(s) || s <= 0) return(NA_real_)
+  sqrt(length(m)) * mean(m) / s
+}
+
 # Adaptive percentile bootstrap for Delta.
 # Faithful to study_1::boot_ci_delta (resamples rows, recomputes Delta).
+# When prep$cluster is present, whole clusters are resampled with replacement
+# so that within-school dependence is preserved (cluster bootstrap; Lee & Kim,
+# 2026, JEEV 39(2), section IV.3).
 .ivc_boot <- function(prep, data_cc, est_args, level = 0.95,
                       n_boot = 2000, min_ok = 1000, chunk = 500, max_draw = NULL) {
   n <- prep$n
   if (is.null(max_draw)) max_draw <- max(n_boot, max_draw <- n_boot * 3)
   alpha <- c((1 - level) / 2, 1 - (1 - level) / 2)
+  cl_split <- if (is.null(prep$cluster)) NULL else split(seq_len(n), prep$cluster)
   deltas <- numeric(0); drawn <- 0L
   target <- max(n_boot, min_ok)
   while (length(deltas) < target && drawn < max_draw) {
     b <- min(chunk, max_draw - drawn)
     vals <- vapply(seq_len(b), function(i) {
-      idx <- sample.int(n, n, replace = TRUE)
+      idx <- if (is.null(cl_split)) {
+        sample.int(n, n, replace = TRUE)
+      } else {
+        unlist(cl_split[sample.int(length(cl_split), length(cl_split), replace = TRUE)],
+               use.names = FALSE)
+      }
       p2 <- list(Y = prep$Y[idx], P = prep$P[idx], A = prep$A[idx],
                  Z = prep$Z[idx], w = prep$w[idx],
                  xmat = if (is.null(prep$xmat)) NULL else prep$xmat[idx, , drop = FALSE],
-                 n = n)
+                 n = length(idx))
       e <- .ivc_estimates(p2)
       if (any(!is.finite(e))) NA_real_ else unname(e["Delta"])
     }, numeric(1))

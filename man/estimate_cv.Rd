@@ -13,7 +13,9 @@ estimate_cv(
   covariates = NULL,
   weights = NULL,
   return_delta = FALSE,
-  se = FALSE
+  se = FALSE,
+  cluster = NULL,
+  weak_loading_warn = 2
 )
 }
 \arguments{
@@ -39,7 +41,23 @@ output. Default \code{FALSE}.}
 
 \item{se}{If \code{TRUE}, includes analytic standard error(s) in the output: the
 SE of \code{tau_comp} (and of \code{delta_hat} when \code{return_delta = TRUE}), taken
-from the diagonal of the GMM sandwich used by \code{\link[=compare_iv_cv]{compare_iv_cv()}}.}
+from the diagonal of the GMM sandwich used by \code{\link[=compare_iv_cv]{compare_iv_cv()}}. This
+sandwich already propagates the sampling error of \code{delta_hat} into the SE
+of \code{tau_comp}, i.e. the correction factor is \emph{not} treated as a fixed
+constant (equivalent to the delta-method formalization of Lee & Kim,
+2026, JEEV 39(2)).}
+
+\item{cluster}{Optional cluster identifier (column name in \code{data} or a
+vector of length \code{nrow(data)}), e.g. school. When supplied and
+\code{se = TRUE}, the moment contributions are summed within clusters before
+forming the sandwich "meat", yielding cluster-robust standard errors that
+allow arbitrary within-cluster dependence (Lee & Kim, 2026, JEEV 39(2),
+eq. 42-44). The point estimate is unaffected.}
+
+\item{weak_loading_warn}{Threshold on the |z| statistic of the compass
+loading denominator \eqn{\mathrm{cov}(P, Z \mid A)} below which a warning
+about an unstable ratio \eqn{\widehat{\delta}} is issued. Default \code{2}.
+Set to \code{0} to disable.}
 }
 \value{
 A numeric scalar \eqn{\widehat{\tau}_{comp}}, or a named numeric
@@ -63,5 +81,5 @@ estimate_cv(d, outcome = "Y", pretest = "P", treat = "A",
             instrument = "Z", return_delta = TRUE, se = TRUE)
 }
 \seealso{
-\code{\link[=estimate_iv]{estimate_iv()}}, \code{\link[=compare_iv_cv]{compare_iv_cv()}}
+\code{\link[=estimate_iv]{estimate_iv()}}, \code{\link[=compare_iv_cv]{compare_iv_cv()}}, \code{\link[=ivc_cli_test]{ivc_cli_test()}}
 }

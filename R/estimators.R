@@ -56,12 +56,26 @@ estimate_iv <- function(data, outcome, pretest, treat, instrument,
 #'   output. Default `FALSE`.
 #' @param se If `TRUE`, includes analytic standard error(s) in the output: the
 #'   SE of `tau_comp` (and of `delta_hat` when `return_delta = TRUE`), taken
-#'   from the diagonal of the GMM sandwich used by [compare_iv_cv()].
+#'   from the diagonal of the GMM sandwich used by [compare_iv_cv()]. This
+#'   sandwich already propagates the sampling error of `delta_hat` into the SE
+#'   of `tau_comp`, i.e. the correction factor is *not* treated as a fixed
+#'   constant (equivalent to the delta-method formalization of Lee & Kim,
+#'   2026, JEEV 39(2)).
+#' @param cluster Optional cluster identifier (column name in `data` or a
+#'   vector of length `nrow(data)`), e.g. school. When supplied and
+#'   `se = TRUE`, the moment contributions are summed within clusters before
+#'   forming the sandwich "meat", yielding cluster-robust standard errors that
+#'   allow arbitrary within-cluster dependence (Lee & Kim, 2026, JEEV 39(2),
+#'   eq. 42-44). The point estimate is unaffected.
+#' @param weak_loading_warn Threshold on the |z| statistic of the compass
+#'   loading denominator \eqn{\mathrm{cov}(P, Z \mid A)} below which a warning
+#'   about an unstable ratio \eqn{\widehat{\delta}} is issued. Default `2`.
+#'   Set to `0` to disable.
 #'
 #' @return A numeric scalar \eqn{\widehat{\tau}_{comp}}, or a named numeric
 #'   vector when `return_delta` and/or `se` are `TRUE` (elements among
 #'   `tau_comp`, `delta_hat`, `se_tau_comp`, `se_delta_hat`).
-#' @seealso [estimate_iv()], [compare_iv_cv()]
+#' @seealso [estimate_iv()], [compare_iv_cv()], [ivc_cli_test()]
 #' @examples
 #' d <- ivc_simulate(n = 1000, gamma = 1, kappa = 0.2, seed = 1)
 #' estimate_cv(d, outcome = "Y", pretest = "P", treat = "A",
@@ -69,9 +83,25 @@ estimate_iv <- function(data, outcome, pretest, treat, instrument,
 #' @export
 estimate_cv <- function(data, outcome, pretest, treat, instrument,
                         covariates = NULL, weights = NULL,
-                        return_delta = FALSE, se = FALSE) {
-  prep <- .ivc_prepare(data, outcome, pretest, treat, instrument, covariates, weights)
+                        return_delta = FALSE, se = FALSE,
+                        cluster = NULL, weak_loading_warn = 2) {
+  prep <- .ivc_prepare(data, outcome, pretest, treat, instrument,
+                       covariates, weights, cluster = cluster)
   est <- .ivc_estimates(prep)
+  # Regularity check (Lee & Kim, 2026, JEEV 39(2), section III.1): delta_hat
+  # is a ratio; a near-zero denominator makes both the estimate and its
+  # linearized SE unreliable.
+  # DECISION (provisional): |z| < 2 as the warning cutoff -- roughly "the
+  # denominator is not distinguishable from zero at the 5% level". No
+  # published cutoff exists for this diagnostic; revisit after simulation.
+  if (weak_loading_warn > 0) {
+    lz <- .ivc_loading_z(prep)
+    if (is.finite(lz) && abs(lz) < weak_loading_warn) {
+      warning(sprintf(paste0("weak compass loading: |z| = %.2f for cov(P, Z | A). ",
+                             "The ratio delta_hat and its SE may be unstable."),
+                      abs(lz)), call. = FALSE)
+    }
+  }
   if (!isTRUE(return_delta) && !isTRUE(se)) return(unname(est["tau_comp"]))
   out <- c(tau_comp = unname(est["tau_comp"]))
   if (isTRUE(return_delta)) out <- c(out, delta_hat = unname(est["delta_hat"]))
@@ -102,6 +132,10 @@ estimate_cv <- function(data, outcome, pretest, treat, instrument,
 #' @param n_boot Target number of valid bootstrap replicates (used when
 #'   `se = "bootstrap"`). Default `2000`.
 #' @param seed Optional integer seed for reproducible bootstrap resampling.
+#' @param cluster Optional cluster identifier (column name or vector), e.g.
+#'   school. With `se = "mom"` a cluster-robust sandwich is used; with
+#'   `se = "bootstrap"` whole clusters are resampled (Lee & Kim, 2026,
+#'   JEEV 39(2)). Point estimates are unaffected.
 #'
 #' @return An object of class `"ivc"`: a list with elements `tau_IV`,
 #'   `tau_comp`, `delta_hat`, `Delta`, `se`, `ci` (length-2 vector),
@@ -118,10 +152,12 @@ estimate_cv <- function(data, outcome, pretest, treat, instrument,
 compare_iv_cv <- function(data, outcome, pretest, treat, instrument,
                           covariates = NULL, weights = NULL,
                           se = c("bootstrap", "mom"),
-                          level = 0.95, n_boot = 2000, seed = NULL) {
+                          level = 0.95, n_boot = 2000, seed = NULL,
+                          cluster = NULL) {
   se <- match.arg(se)
   cl <- match.call()
-  prep <- .ivc_prepare(data, outcome, pretest, treat, instrument, covariates, weights)
+  prep <- .ivc_prepare(data, outcome, pretest, treat, instrument,
+                       covariates, weights, cluster = cluster)
   est <- .ivc_estimates(prep)
   if (any(!is.finite(est))) {
     stop("Estimates are not finite (instrument too weak or relevance collapses).",
@@ -162,7 +198,10 @@ compare_iv_cv <- function(data, outcome, pretest, treat, instrument,
     se_delta_hat = unname(se_params["delta_hat"]),
     Delta = Delta, se = se_val, ci = ci, p_value = p_value,
     reject = reject, method = se, level = level,
-    n = prep$n, boot_reps = reps, call = cl
+    n = prep$n,
+    n_clusters = if (is.null(prep$cluster)) NA_integer_
+                 else length(unique(prep$cluster)),
+    boot_reps = reps, call = cl
   )
   class(out) <- "ivc"
   out
