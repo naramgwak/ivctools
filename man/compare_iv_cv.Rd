@@ -16,7 +16,8 @@ compare_iv_cv(
   level = 0.95,
   n_boot = 2000,
   seed = NULL,
-  cluster = NULL
+  cluster = NULL,
+  weak_loading_warn = 2
 )
 }
 \arguments{
@@ -51,7 +52,14 @@ method-of-moments standard error with a normal interval).}
 \item{cluster}{Optional cluster identifier (column name or vector), e.g.
 school. With \code{se = "mom"} a cluster-robust sandwich is used; with
 \code{se = "bootstrap"} whole clusters are resampled (Lee & Kim, 2026,
-JEEV 39(2)). Point estimates are unaffected.}
+JEEV 39(2)). Point estimates are unaffected. With few clusters (roughly
+G < 40) the cluster-robust SE can be optimistic (Cameron & Miller, 2015);
+no finite-sample degrees-of-freedom correction is applied.}
+
+\item{weak_loading_warn}{Threshold on the |z| statistic of the compass
+loading denominator \eqn{\mathrm{cov}(P, Z \mid A)} below which a warning
+about an unstable ratio \eqn{\widehat{\delta}} is issued. Default \code{2}.
+Set to \code{0} to disable. See \code{\link[=estimate_cv]{estimate_cv()}}.}
 }
 \value{
 An object of class \code{"ivc"}: a list with elements \code{tau_IV},

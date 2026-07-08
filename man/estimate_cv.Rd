@@ -52,7 +52,9 @@ vector of length \code{nrow(data)}), e.g. school. When supplied and
 \code{se = TRUE}, the moment contributions are summed within clusters before
 forming the sandwich "meat", yielding cluster-robust standard errors that
 allow arbitrary within-cluster dependence (Lee & Kim, 2026, JEEV 39(2),
-eq. 42-44). The point estimate is unaffected.}
+eq. 42-44). The point estimate is unaffected. With few clusters (roughly
+G < 40) the cluster-robust SE can be optimistic (Cameron & Miller, 2015);
+no finite-sample degrees-of-freedom correction is applied.}
 
 \item{weak_loading_warn}{Threshold on the |z| statistic of the compass
 loading denominator \eqn{\mathrm{cov}(P, Z \mid A)} below which a warning

@@ -12,7 +12,8 @@ estimate_iv(
   instrument,
   covariates = NULL,
   weights = NULL,
-  se = FALSE
+  se = FALSE,
+  cluster = NULL
 )
 }
 \arguments{
@@ -38,6 +39,12 @@ analytic standard error (\code{estimate}, \code{se}). The standard error is the
 heteroskedasticity-robust just-identified IV standard error, taken from
 the diagonal of the same GMM sandwich used by \code{\link[=compare_iv_cv]{compare_iv_cv()}}. Default
 \code{FALSE} returns the point estimate only.}
+
+\item{cluster}{Optional cluster identifier (column name in \code{data} or a
+vector of length \code{nrow(data)}), e.g. school. When supplied and
+\code{se = TRUE}, a cluster-robust standard error is returned. The point
+estimate is unaffected. With few clusters (roughly G < 40) the
+cluster-robust SE can be optimistic (Cameron & Miller, 2015).}
 }
 \value{
 A numeric scalar (the IV estimate), or a named vector

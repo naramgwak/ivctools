@@ -82,7 +82,10 @@ ivc_power <- function(n, gamma, kappa, n_rep = 500,
                       beta_P = beta_P, beta_Y = beta_Y, sd_eU = sd_eU,
                       sd_eP = sd_eP, sd_eY = sd_eY, sd_eA = sd_eA)
     fit <- tryCatch(
-      compare_iv_cv(d, "Y", "P", "A", "Z", se = se, level = level, n_boot = n_boot),
+      # weak_loading_warn = 0: a power run intentionally explores weak designs;
+      # repeating the per-fit warning hundreds of times would only be noise.
+      compare_iv_cv(d, "Y", "P", "A", "Z", se = se, level = level, n_boot = n_boot,
+                    weak_loading_warn = 0),
       error = function(e) NULL)
     if (is.null(fit) || !is.finite(fit$ci[1]) || !is.finite(fit$ci[2])) {
       ok[r] <- FALSE; next

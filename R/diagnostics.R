@@ -38,6 +38,19 @@
 #' @param min_n Minimum observations per treatment level required to attempt
 #'   the test. Default `30`.
 #'
+#' @section Cautions:
+#' Screening many candidate pairs and adopting the one with the largest
+#' p-value is a form of post-selection: when several pairs are in fact
+#' invalid, the chance that at least one passes by luck grows with the number
+#' of pairs, so a non-rejection for the *selected* pair is a weaker guarantee
+#' than a non-rejection for a single prespecified pair. Report the number of
+#' pairs screened alongside the result.
+#'
+#' The tetrad standard error assumes independent observations within each
+#' treatment level; its behavior under clustered data (e.g. students nested
+#' in schools) has not been established and is left for future work, in line
+#' with the limitations noted in the source paper.
+#'
 #' @return A data frame of class `"ivc_cli"` with one row per (pair,
 #'   treatment level): columns `c1`, `c2`, `level`, `n`, `tetrad`, `se`, `z`,
 #'   `p_value`, `p_adj`. The pair-level decision is "no evidence of violation"
@@ -70,12 +83,21 @@ ivc_cli_test <- function(data, pretest, posttest, treat, compass,
   if (length(levels_g) < 2L) {
     warning("treatment has a single level; testing within that level only.", call. = FALSE)
   }
+  # v0.2.1: a continuous treatment silently produced one all-NA row per unique
+  # value. The theorem is stated per discrete treatment level (Lee & Kim, 2026,
+  # JEEV 39(1)), so refuse clearly instead.
+  # DECISION (provisional): 20 levels as the cutoff -- generous for ordinal
+  # treatments, far below what a continuous variable produces.
+  if (length(levels_g) > 20L) {
+    stop("treatment has ", length(levels_g), " distinct values; the tetrad test ",
+         "requires a discrete treatment with a small number of levels. ",
+         "Discretize the treatment or check the `treat` column.", call. = FALSE)
+  }
   pairs <- utils::combn(compass, 2, simplify = FALSE)
 
   rows <- list()
   for (pr in pairs) {
     c1 <- pr[1]; c2 <- pr[2]
-    pvals <- numeric(0)
     tmp <- list()
     for (lv in levels_g) {
       sub <- data[!is.na(g) & g == lv,
@@ -92,7 +114,6 @@ ivc_cli_test <- function(data, pretest, posttest, treat, compass,
         tetrad = res["tetrad"], se = res["se"], z = res["z"],
         p_value = res["p"], row.names = NULL
       )
-      pvals <- c(pvals, res["p"])
     }
     block <- do.call(rbind, tmp)
     block$p_adj <- stats::p.adjust(block$p_value, method = adjust)
@@ -140,13 +161,22 @@ print.ivc_cli <- function(x, digits = 4, alpha = 0.05, ...) {
   cat("Conditional local independence (tetrad) test\n")
   cat(sprintf("  p-value adjustment within pair: %s\n\n", attr(x, "adjust")))
   print.data.frame(x, digits = digits, row.names = FALSE)
-  ok <- stats::aggregate(p_adj ~ c1 + c2, data = as.data.frame(x),
-                         FUN = function(p) all(is.finite(p)) && all(p > alpha))
-  cat("\nPair-level decision (all adjusted p >", alpha, "=> no evidence of violation):\n")
-  for (i in seq_len(nrow(ok))) {
-    cat(sprintf("  (%s, %s): %s\n", ok$c1[i], ok$c2[i],
-                if (isTRUE(ok$p_adj[i])) "no evidence of violation"
-                else "REJECTED (or not testable)"))
+  # v0.2.1: three-way pair decision. The old label "REJECTED (or not testable)"
+  # conflated "evidence of violation" with "sample too small to test", which
+  # have opposite practical implications for the analyst.
+  df <- as.data.frame(x)
+  keys <- unique(df[, c("c1", "c2")])
+  cat("\nPair-level decision (alpha =", alpha, "):\n")
+  for (i in seq_len(nrow(keys))) {
+    p <- df$p_adj[df$c1 == keys$c1[i] & df$c2 == keys$c2[i]]
+    verdict <- if (any(is.finite(p) & p < alpha)) {
+      "violation detected (some adjusted p < alpha)"
+    } else if (any(!is.finite(p))) {
+      "inconclusive (some levels not testable, n < min_n)"
+    } else {
+      "no evidence of violation"
+    }
+    cat(sprintf("  (%s, %s): %s\n", keys$c1[i], keys$c2[i], verdict))
   }
   invisible(x)
 }

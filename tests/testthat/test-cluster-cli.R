@@ -69,3 +69,54 @@ test_that("weak compass loading triggers a warning", {
                   P = rnorm(n), Y = rnorm(n))  # Z unrelated to P given A
   expect_warning(estimate_cv(d, "Y", "P", "A", "Z"), "weak compass loading")
 })
+
+# --- v0.2.1 fixes ---
+
+test_that("bootstrap honours small n_boot instead of silently returning NA", {
+  d <- ivc_simulate(n = 500, gamma = 1, kappa = 0.2, seed = 5)
+  fb <- compare_iv_cv(d, "Y", "P", "A", "Z", se = "bootstrap",
+                      n_boot = 300, seed = 1)
+  expect_true(is.finite(fb$se))
+  expect_true(all(is.finite(fb$ci)))
+  expect_gt(fb$boot_reps, 299)
+})
+
+test_that("continuous treatment is rejected by ivc_cli_test with a clear error", {
+  set.seed(1)
+  n <- 200; U <- rnorm(n)
+  d <- data.frame(A = U + rnorm(n),
+                  P = U + rnorm(n), Y = U + rnorm(n),
+                  C1 = U + rnorm(n), C2 = U + rnorm(n))
+  expect_error(ivc_cli_test(d, "P", "Y", "A", c("C1", "C2")),
+               "distinct values")
+})
+
+test_that("estimate_iv accepts cluster and returns a larger SE under school treatment", {
+  d <- .sim_school(seed = 108)
+  si <- estimate_iv(d, "Y", "P", "A", "Z", se = TRUE)
+  sc <- estimate_iv(d, "Y", "P", "A", "Z", se = TRUE, cluster = "sid")
+  expect_equal(unname(si["estimate"]), unname(sc["estimate"]), tolerance = 1e-12)
+  expect_gt(unname(sc["se"]), unname(si["se"]))
+})
+
+test_that("compare_iv_cv warns on weak compass loading", {
+  set.seed(109)
+  n <- 800
+  d <- data.frame(A = rnorm(n), Z = 0.8 * rnorm(n),
+                  P = rnorm(n), Y = rnorm(n))
+  d$A <- d$A + d$Z            # relevant instrument, but Z unrelated to P | A
+  expect_warning(compare_iv_cv(d, "Y", "P", "A", "Z", se = "mom"),
+                 "weak compass loading")
+})
+
+test_that("print.ivc_cli reports 'inconclusive' (not 'violation') for untestable levels", {
+  set.seed(110)
+  n <- 60; U <- rnorm(n)
+  d <- data.frame(G = rep(c(0, 1), c(50, 10)),   # level 1 has n = 10 < min_n
+                  P = U + rnorm(n), Y = U + rnorm(n),
+                  C1 = U + rnorm(n), C2 = U + rnorm(n))
+  tt <- ivc_cli_test(d, "P", "Y", "G", c("C1", "C2"))
+  out <- paste(utils::capture.output(print(tt)), collapse = "\n")
+  expect_true(grepl("inconclusive", out))
+  expect_true(!grepl("violation detected", out))
+})

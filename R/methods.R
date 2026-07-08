@@ -12,7 +12,11 @@ print.ivc <- function(x, ...) {
   cat(sprintf("  %.0f%% CI = [%.4f, %.4f]   p = %s\n",
               100 * x$level, x$ci[1], x$ci[2],
               ifelse(is.finite(x$p_value), sprintf("%.4f", x$p_value), "NA")))
-  cat(sprintf("  method = %s, n = %d\n", x$method, x$n))
+  cat(sprintf("  method = %s%s, n = %d\n", x$method,
+              if (!is.null(x$n_clusters) && is.finite(x$n_clusters))
+                sprintf(" (cluster-robust, G = %d clusters)", x$n_clusters)
+              else "",
+              x$n))
   cat(sprintf("  Conclusion: %s\n",
               if (isTRUE(x$reject))
                 "interval excludes 0 -> evidence against exogeneity"

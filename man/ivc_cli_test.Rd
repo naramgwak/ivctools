@@ -59,6 +59,21 @@ a structural inconsistency somewhere in \verb{(P, Y, C1, C2)} but cannot single
 out which candidate violates the assumption (identification limit noted in
 the source paper).
 }
+\section{Cautions}{
+
+Screening many candidate pairs and adopting the one with the largest
+p-value is a form of post-selection: when several pairs are in fact
+invalid, the chance that at least one passes by luck grows with the number
+of pairs, so a non-rejection for the \emph{selected} pair is a weaker guarantee
+than a non-rejection for a single prespecified pair. Report the number of
+pairs screened alongside the result.
+
+The tetrad standard error assumes independent observations within each
+treatment level; its behavior under clustered data (e.g. students nested
+in schools) has not been established and is left for future work, in line
+with the limitations noted in the source paper.
+}
+
 \examples{
 d <- ivc_simulate(n = 1000, gamma = 1, kappa = 0.2, seed = 1)
 # binary treatment strata and two noisy proxies of U as candidates

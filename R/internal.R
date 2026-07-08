@@ -140,7 +140,7 @@
   Ax <- .ivc_resid_on_X(A, xmat, w); Zx <- .ivc_resid_on_X(Z, xmat, w)
   n <- length(Yx)
 
-  delta  <- est["delta_hat"]; tau_c <- est["tau_comp"]; tiv <- est["tau_IV"]
+  delta  <- est["delta_hat"]; tiv <- est["tau_IV"]
   Aonly <- cbind(1, Ax)
   Zr <- stats::residuals(stats::lm.wfit(Aonly, Zx, w))
   Yr <- stats::residuals(stats::lm.wfit(Aonly, Yx, w))
@@ -231,9 +231,13 @@
 # so that within-school dependence is preserved (cluster bootstrap; Lee & Kim,
 # 2026, JEEV 39(2), section IV.3).
 .ivc_boot <- function(prep, data_cc, est_args, level = 0.95,
-                      n_boot = 2000, min_ok = 1000, chunk = 500, max_draw = NULL) {
+                      n_boot = 2000, min_ok = NULL, chunk = 500, max_draw = NULL) {
   n <- prep$n
-  if (is.null(max_draw)) max_draw <- max(n_boot, max_draw <- n_boot * 3)
+  # v0.2.1: min_ok used to be hard-coded at 1000, so any n_boot < 1000
+  # silently returned NA (the target could never be met). It now adapts to
+  # the request; the 1000 floor is kept only when the user asks for more.
+  if (is.null(min_ok)) min_ok <- min(n_boot, 1000L)
+  if (is.null(max_draw)) max_draw <- n_boot * 3L
   alpha <- c((1 - level) / 2, 1 - (1 - level) / 2)
   cl_split <- if (is.null(prep$cluster)) NULL else split(seq_len(n), prep$cluster)
   deltas <- numeric(0); drawn <- 0L
@@ -258,6 +262,11 @@
     drawn <- drawn + b
   }
   if (length(deltas) < min_ok) {
+    warning(sprintf(paste0("bootstrap failed: only %d of the required %d valid ",
+                           "replicates were obtained within %d draws; returning NA. ",
+                           "The estimates may be unstable (weak instrument or ",
+                           "weak compass loading)."),
+                    length(deltas), min_ok, drawn), call. = FALSE)
     return(list(ci = c(NA_real_, NA_real_), se = NA_real_, reps = length(deltas)))
   }
   ci <- stats::quantile(deltas, probs = alpha, names = FALSE, type = 7)

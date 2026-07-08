@@ -1,0 +1,366 @@
+diff --git a/DESCRIPTION b/DESCRIPTION
+index 7c12249..f75c40d 100644
+--- a/DESCRIPTION
++++ b/DESCRIPTION
+@@ -1,6 +1,6 @@
+ Package: ivctools
+ Title: IV-Compass Diagnostics for Single-Instrument Exogeneity
+-Version: 0.2.0
++Version: 0.2.1
+ Authors@R:
+     person("Naram", "Gwak", email = "naram.gwak@gmail.com",
+            role = c("aut", "cre"))
+diff --git a/NEWS.md b/NEWS.md
+index 167a337..14bf554 100644
+--- a/NEWS.md
++++ b/NEWS.md
+@@ -1,3 +1,35 @@
++# ivctools 0.2.1
++
++## Bug fixes and usability
++
++* `compare_iv_cv(se = "bootstrap")` with `n_boot < 1000` silently returned
++  `NA` standard errors because the minimum-valid-replicates floor was
++  hard-coded at 1000; the floor now adapts to `n_boot`, and a genuine
++  bootstrap failure produces an explicit warning instead of a silent `NA`.
++* `ivc_cli_test()` now refuses a continuous treatment with a clear error
++  (previously it produced one all-`NA` row per unique treatment value).
++* `print.ivc_cli()` distinguishes three pair-level outcomes -- "violation
++  detected", "inconclusive (some levels not testable)", and "no evidence of
++  violation" -- instead of conflating rejection with untestability.
++
++## Consistency
++
++* `estimate_iv()` gains the same `cluster` argument as `estimate_cv()`.
++* `compare_iv_cv()` gains the same `weak_loading_warn` check as
++  `estimate_cv()`, so the main diagnostic entry point now warns when the
++  compass loading is too weak for a stable correction. `ivc_power()`
++  suppresses this per-replicate warning inside its simulation loop.
++* `print.ivc()` reports when standard errors are cluster-robust and shows
++  the number of clusters.
++
++## Documentation
++
++* Small-cluster caution (roughly G < 40; no finite-sample df correction)
++  added to the `cluster` documentation of all three estimators.
++* `ivc_cli_test()` documents the post-selection caveat of screening many
++  candidate pairs, and notes that the tetrad SE assumes within-level
++  independence (behavior under clustered data not yet established).
++
+ # ivctools 0.2.0
+ 
+ ## New features
+diff --git a/R/dgp.R b/R/dgp.R
+index 23af6cb..ade31ef 100644
+--- a/R/dgp.R
++++ b/R/dgp.R
+@@ -82,7 +82,10 @@ ivc_power <- function(n, gamma, kappa, n_rep = 500,
+                       beta_P = beta_P, beta_Y = beta_Y, sd_eU = sd_eU,
+                       sd_eP = sd_eP, sd_eY = sd_eY, sd_eA = sd_eA)
+     fit <- tryCatch(
+-      compare_iv_cv(d, "Y", "P", "A", "Z", se = se, level = level, n_boot = n_boot),
++      # weak_loading_warn = 0: a power run intentionally explores weak designs;
++      # repeating the per-fit warning hundreds of times would only be noise.
++      compare_iv_cv(d, "Y", "P", "A", "Z", se = se, level = level, n_boot = n_boot,
++                    weak_loading_warn = 0),
+       error = function(e) NULL)
+     if (is.null(fit) || !is.finite(fit$ci[1]) || !is.finite(fit$ci[2])) {
+       ok[r] <- FALSE; next
+diff --git a/R/diagnostics.R b/R/diagnostics.R
+index 681dbf4..ff50c8d 100644
+--- a/R/diagnostics.R
++++ b/R/diagnostics.R
+@@ -38,6 +38,19 @@
+ #' @param min_n Minimum observations per treatment level required to attempt
+ #'   the test. Default `30`.
+ #'
++#' @section Cautions:
++#' Screening many candidate pairs and adopting the one with the largest
++#' p-value is a form of post-selection: when several pairs are in fact
++#' invalid, the chance that at least one passes by luck grows with the number
++#' of pairs, so a non-rejection for the *selected* pair is a weaker guarantee
++#' than a non-rejection for a single prespecified pair. Report the number of
++#' pairs screened alongside the result.
++#'
++#' The tetrad standard error assumes independent observations within each
++#' treatment level; its behavior under clustered data (e.g. students nested
++#' in schools) has not been established and is left for future work, in line
++#' with the limitations noted in the source paper.
++#'
+ #' @return A data frame of class `"ivc_cli"` with one row per (pair,
+ #'   treatment level): columns `c1`, `c2`, `level`, `n`, `tetrad`, `se`, `z`,
+ #'   `p_value`, `p_adj`. The pair-level decision is "no evidence of violation"
+@@ -70,12 +83,21 @@ ivc_cli_test <- function(data, pretest, posttest, treat, compass,
+   if (length(levels_g) < 2L) {
+     warning("treatment has a single level; testing within that level only.", call. = FALSE)
+   }
++  # v0.2.1: a continuous treatment silently produced one all-NA row per unique
++  # value. The theorem is stated per discrete treatment level (Lee & Kim, 2026,
++  # JEEV 39(1)), so refuse clearly instead.
++  # DECISION (provisional): 20 levels as the cutoff -- generous for ordinal
++  # treatments, far below what a continuous variable produces.
++  if (length(levels_g) > 20L) {
++    stop("treatment has ", length(levels_g), " distinct values; the tetrad test ",
++         "requires a discrete treatment with a small number of levels. ",
++         "Discretize the treatment or check the `treat` column.", call. = FALSE)
++  }
+   pairs <- utils::combn(compass, 2, simplify = FALSE)
+ 
+   rows <- list()
+   for (pr in pairs) {
+     c1 <- pr[1]; c2 <- pr[2]
+-    pvals <- numeric(0)
+     tmp <- list()
+     for (lv in levels_g) {
+       sub <- data[!is.na(g) & g == lv,
+@@ -92,7 +114,6 @@ ivc_cli_test <- function(data, pretest, posttest, treat, compass,
+         tetrad = res["tetrad"], se = res["se"], z = res["z"],
+         p_value = res["p"], row.names = NULL
+       )
+-      pvals <- c(pvals, res["p"])
+     }
+     block <- do.call(rbind, tmp)
+     block$p_adj <- stats::p.adjust(block$p_value, method = adjust)
+@@ -140,13 +161,22 @@ print.ivc_cli <- function(x, digits = 4, alpha = 0.05, ...) {
+   cat("Conditional local independence (tetrad) test\n")
+   cat(sprintf("  p-value adjustment within pair: %s\n\n", attr(x, "adjust")))
+   print.data.frame(x, digits = digits, row.names = FALSE)
+-  ok <- stats::aggregate(p_adj ~ c1 + c2, data = as.data.frame(x),
+-                         FUN = function(p) all(is.finite(p)) && all(p > alpha))
+-  cat("\nPair-level decision (all adjusted p >", alpha, "=> no evidence of violation):\n")
+-  for (i in seq_len(nrow(ok))) {
+-    cat(sprintf("  (%s, %s): %s\n", ok$c1[i], ok$c2[i],
+-                if (isTRUE(ok$p_adj[i])) "no evidence of violation"
+-                else "REJECTED (or not testable)"))
++  # v0.2.1: three-way pair decision. The old label "REJECTED (or not testable)"
++  # conflated "evidence of violation" with "sample too small to test", which
++  # have opposite practical implications for the analyst.
++  df <- as.data.frame(x)
++  keys <- unique(df[, c("c1", "c2")])
++  cat("\nPair-level decision (alpha =", alpha, "):\n")
++  for (i in seq_len(nrow(keys))) {
++    p <- df$p_adj[df$c1 == keys$c1[i] & df$c2 == keys$c2[i]]
++    verdict <- if (any(is.finite(p) & p < alpha)) {
++      "violation detected (some adjusted p < alpha)"
++    } else if (any(!is.finite(p))) {
++      "inconclusive (some levels not testable, n < min_n)"
++    } else {
++      "no evidence of violation"
++    }
++    cat(sprintf("  (%s, %s): %s\n", keys$c1[i], keys$c2[i], verdict))
+   }
+   invisible(x)
+ }
+diff --git a/R/estimators.R b/R/estimators.R
+index bde45c7..8cdc0cd 100644
+--- a/R/estimators.R
++++ b/R/estimators.R
+@@ -21,6 +21,11 @@
+ #'   heteroskedasticity-robust just-identified IV standard error, taken from
+ #'   the diagonal of the same GMM sandwich used by [compare_iv_cv()]. Default
+ #'   `FALSE` returns the point estimate only.
++#' @param cluster Optional cluster identifier (column name in `data` or a
++#'   vector of length `nrow(data)`), e.g. school. When supplied and
++#'   `se = TRUE`, a cluster-robust standard error is returned. The point
++#'   estimate is unaffected. With few clusters (roughly G < 40) the
++#'   cluster-robust SE can be optimistic (Cameron & Miller, 2015).
+ #'
+ #' @return A numeric scalar (the IV estimate), or a named vector
+ #'   `c(estimate, se)` when `se = TRUE`.
+@@ -31,8 +36,10 @@
+ #' estimate_iv(d, "Y", "P", "A", "Z", se = TRUE)
+ #' @export
+ estimate_iv <- function(data, outcome, pretest, treat, instrument,
+-                        covariates = NULL, weights = NULL, se = FALSE) {
+-  prep <- .ivc_prepare(data, outcome, pretest, treat, instrument, covariates, weights)
++                        covariates = NULL, weights = NULL, se = FALSE,
++                        cluster = NULL) {
++  prep <- .ivc_prepare(data, outcome, pretest, treat, instrument,
++                       covariates, weights, cluster = cluster)
+   est <- .ivc_estimates(prep)
+   if (!isTRUE(se)) return(unname(est["tau_IV"]))
+   s <- .ivc_mom_se(prep, est)$se_params["tau_IV"]
+@@ -66,7 +73,9 @@ estimate_iv <- function(data, outcome, pretest, treat, instrument,
+ #'   `se = TRUE`, the moment contributions are summed within clusters before
+ #'   forming the sandwich "meat", yielding cluster-robust standard errors that
+ #'   allow arbitrary within-cluster dependence (Lee & Kim, 2026, JEEV 39(2),
+-#'   eq. 42-44). The point estimate is unaffected.
++#'   eq. 42-44). The point estimate is unaffected. With few clusters (roughly
++#'   G < 40) the cluster-robust SE can be optimistic (Cameron & Miller, 2015);
++#'   no finite-sample degrees-of-freedom correction is applied.
+ #' @param weak_loading_warn Threshold on the |z| statistic of the compass
+ #'   loading denominator \eqn{\mathrm{cov}(P, Z \mid A)} below which a warning
+ #'   about an unstable ratio \eqn{\widehat{\delta}} is issued. Default `2`.
+@@ -135,7 +144,13 @@ estimate_cv <- function(data, outcome, pretest, treat, instrument,
+ #' @param cluster Optional cluster identifier (column name or vector), e.g.
+ #'   school. With `se = "mom"` a cluster-robust sandwich is used; with
+ #'   `se = "bootstrap"` whole clusters are resampled (Lee & Kim, 2026,
+-#'   JEEV 39(2)). Point estimates are unaffected.
++#'   JEEV 39(2)). Point estimates are unaffected. With few clusters (roughly
++#'   G < 40) the cluster-robust SE can be optimistic (Cameron & Miller, 2015);
++#'   no finite-sample degrees-of-freedom correction is applied.
++#' @param weak_loading_warn Threshold on the |z| statistic of the compass
++#'   loading denominator \eqn{\mathrm{cov}(P, Z \mid A)} below which a warning
++#'   about an unstable ratio \eqn{\widehat{\delta}} is issued. Default `2`.
++#'   Set to `0` to disable. See [estimate_cv()].
+ #'
+ #' @return An object of class `"ivc"`: a list with elements `tau_IV`,
+ #'   `tau_comp`, `delta_hat`, `Delta`, `se`, `ci` (length-2 vector),
+@@ -153,7 +168,7 @@ compare_iv_cv <- function(data, outcome, pretest, treat, instrument,
+                           covariates = NULL, weights = NULL,
+                           se = c("bootstrap", "mom"),
+                           level = 0.95, n_boot = 2000, seed = NULL,
+-                          cluster = NULL) {
++                          cluster = NULL, weak_loading_warn = 2) {
+   se <- match.arg(se)
+   cl <- match.call()
+   prep <- .ivc_prepare(data, outcome, pretest, treat, instrument,
+@@ -163,6 +178,16 @@ compare_iv_cv <- function(data, outcome, pretest, treat, instrument,
+     stop("Estimates are not finite (instrument too weak or relevance collapses).",
+          call. = FALSE)
+   }
++  # v0.2.1: the main diagnostic entry point now performs the same weak-loading
++  # regularity check as estimate_cv(); previously only the helper warned.
++  if (weak_loading_warn > 0) {
++    lz <- .ivc_loading_z(prep)
++    if (is.finite(lz) && abs(lz) < weak_loading_warn) {
++      warning(sprintf(paste0("weak compass loading: |z| = %.2f for cov(P, Z | A). ",
++                             "The ratio delta_hat, tau_comp, and Delta may be unstable."),
++                      abs(lz)), call. = FALSE)
++    }
++  }
+   Delta <- unname(est["Delta"])
+   z_crit <- stats::qnorm(1 - (1 - level) / 2)
+ 
+diff --git a/R/internal.R b/R/internal.R
+index b2f175b..812645a 100644
+--- a/R/internal.R
++++ b/R/internal.R
+@@ -140,7 +140,7 @@
+   Ax <- .ivc_resid_on_X(A, xmat, w); Zx <- .ivc_resid_on_X(Z, xmat, w)
+   n <- length(Yx)
+ 
+-  delta  <- est["delta_hat"]; tau_c <- est["tau_comp"]; tiv <- est["tau_IV"]
++  delta  <- est["delta_hat"]; tiv <- est["tau_IV"]
+   Aonly <- cbind(1, Ax)
+   Zr <- stats::residuals(stats::lm.wfit(Aonly, Zx, w))
+   Yr <- stats::residuals(stats::lm.wfit(Aonly, Yx, w))
+@@ -231,9 +231,13 @@
+ # so that within-school dependence is preserved (cluster bootstrap; Lee & Kim,
+ # 2026, JEEV 39(2), section IV.3).
+ .ivc_boot <- function(prep, data_cc, est_args, level = 0.95,
+-                      n_boot = 2000, min_ok = 1000, chunk = 500, max_draw = NULL) {
++                      n_boot = 2000, min_ok = NULL, chunk = 500, max_draw = NULL) {
+   n <- prep$n
+-  if (is.null(max_draw)) max_draw <- max(n_boot, max_draw <- n_boot * 3)
++  # v0.2.1: min_ok used to be hard-coded at 1000, so any n_boot < 1000
++  # silently returned NA (the target could never be met). It now adapts to
++  # the request; the 1000 floor is kept only when the user asks for more.
++  if (is.null(min_ok)) min_ok <- min(n_boot, 1000L)
++  if (is.null(max_draw)) max_draw <- n_boot * 3L
+   alpha <- c((1 - level) / 2, 1 - (1 - level) / 2)
+   cl_split <- if (is.null(prep$cluster)) NULL else split(seq_len(n), prep$cluster)
+   deltas <- numeric(0); drawn <- 0L
+@@ -258,6 +262,11 @@
+     drawn <- drawn + b
+   }
+   if (length(deltas) < min_ok) {
++    warning(sprintf(paste0("bootstrap failed: only %d of the required %d valid ",
++                           "replicates were obtained within %d draws; returning NA. ",
++                           "The estimates may be unstable (weak instrument or ",
++                           "weak compass loading)."),
++                    length(deltas), min_ok, drawn), call. = FALSE)
+     return(list(ci = c(NA_real_, NA_real_), se = NA_real_, reps = length(deltas)))
+   }
+   ci <- stats::quantile(deltas, probs = alpha, names = FALSE, type = 7)
+diff --git a/R/methods.R b/R/methods.R
+index 493883a..eb29bd0 100644
+--- a/R/methods.R
++++ b/R/methods.R
+@@ -12,7 +12,11 @@ print.ivc <- function(x, ...) {
+   cat(sprintf("  %.0f%% CI = [%.4f, %.4f]   p = %s\n",
+               100 * x$level, x$ci[1], x$ci[2],
+               ifelse(is.finite(x$p_value), sprintf("%.4f", x$p_value), "NA")))
+-  cat(sprintf("  method = %s, n = %d\n", x$method, x$n))
++  cat(sprintf("  method = %s%s, n = %d\n", x$method,
++              if (!is.null(x$n_clusters) && is.finite(x$n_clusters))
++                sprintf(" (cluster-robust, G = %d clusters)", x$n_clusters)
++              else "",
++              x$n))
+   cat(sprintf("  Conclusion: %s\n",
+               if (isTRUE(x$reject))
+                 "interval excludes 0 -> evidence against exogeneity"
+diff --git a/tests/testthat/test-cluster-cli.R b/tests/testthat/test-cluster-cli.R
+index 844b30c..0b9f262 100644
+--- a/tests/testthat/test-cluster-cli.R
++++ b/tests/testthat/test-cluster-cli.R
+@@ -69,3 +69,54 @@ test_that("weak compass loading triggers a warning", {
+                   P = rnorm(n), Y = rnorm(n))  # Z unrelated to P given A
+   expect_warning(estimate_cv(d, "Y", "P", "A", "Z"), "weak compass loading")
+ })
++
++# --- v0.2.1 fixes ---
++
++test_that("bootstrap honours small n_boot instead of silently returning NA", {
++  d <- ivc_simulate(n = 500, gamma = 1, kappa = 0.2, seed = 5)
++  fb <- compare_iv_cv(d, "Y", "P", "A", "Z", se = "bootstrap",
++                      n_boot = 300, seed = 1)
++  expect_true(is.finite(fb$se))
++  expect_true(all(is.finite(fb$ci)))
++  expect_gt(fb$boot_reps, 299)
++})
++
++test_that("continuous treatment is rejected by ivc_cli_test with a clear error", {
++  set.seed(1)
++  n <- 200; U <- rnorm(n)
++  d <- data.frame(A = U + rnorm(n),
++                  P = U + rnorm(n), Y = U + rnorm(n),
++                  C1 = U + rnorm(n), C2 = U + rnorm(n))
++  expect_error(ivc_cli_test(d, "P", "Y", "A", c("C1", "C2")),
++               "distinct values")
++})
++
++test_that("estimate_iv accepts cluster and returns a larger SE under school treatment", {
++  d <- .sim_school(seed = 108)
++  si <- estimate_iv(d, "Y", "P", "A", "Z", se = TRUE)
++  sc <- estimate_iv(d, "Y", "P", "A", "Z", se = TRUE, cluster = "sid")
++  expect_equal(unname(si["estimate"]), unname(sc["estimate"]), tolerance = 1e-12)
++  expect_gt(unname(sc["se"]), unname(si["se"]))
++})
++
++test_that("compare_iv_cv warns on weak compass loading", {
++  set.seed(109)
++  n <- 800
++  d <- data.frame(A = rnorm(n), Z = 0.8 * rnorm(n),
++                  P = rnorm(n), Y = rnorm(n))
++  d$A <- d$A + d$Z            # relevant instrument, but Z unrelated to P | A
++  expect_warning(compare_iv_cv(d, "Y", "P", "A", "Z", se = "mom"),
++                 "weak compass loading")
++})
++
++test_that("print.ivc_cli reports 'inconclusive' (not 'violation') for untestable levels", {
++  set.seed(110)
++  n <- 60; U <- rnorm(n)
++  d <- data.frame(G = rep(c(0, 1), c(50, 10)),   # level 1 has n = 10 < min_n
++                  P = U + rnorm(n), Y = U + rnorm(n),
++                  C1 = U + rnorm(n), C2 = U + rnorm(n))
++  tt <- ivc_cli_test(d, "P", "Y", "G", c("C1", "C2"))
++  out <- paste(utils::capture.output(print(tt)), collapse = "\n")
++  expect_true(grepl("inconclusive", out))
++  expect_true(!grepl("violation detected", out))
++})
+diff --git a/vignettes/ivctools.Rmd b/vignettes/ivctools.Rmd
+index 9d3f02e..f5b6909 100644
+--- a/vignettes/ivctools.Rmd
++++ b/vignettes/ivctools.Rmd
+@@ -226,8 +226,8 @@ relevance is about `Z`'s relationship to `A`; the compass loading is about
+ `Z`'s relationship to `P` *conditional on* `A` -- the denominator of
+ `delta_hat`. If that conditional relationship is too weak to distinguish from
+ zero, `delta_hat` (and therefore `tau_comp`) becomes an unstable ratio even
+-when `Z` predicts `A` perfectly well. `estimate_cv()` checks this
+-automatically and warns:
++when `Z` predicts `A` perfectly well. `estimate_cv()` and `compare_iv_cv()`
++check this automatically and warn:
+ 
+ ```{r weak-loading}
+ d_noload <- data.frame(A = rbinom(500, 1, 0.5), Z = rnorm(500),

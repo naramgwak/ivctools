@@ -226,8 +226,8 @@ relevance is about `Z`'s relationship to `A`; the compass loading is about
 `Z`'s relationship to `P` *conditional on* `A` -- the denominator of
 `delta_hat`. If that conditional relationship is too weak to distinguish from
 zero, `delta_hat` (and therefore `tau_comp`) becomes an unstable ratio even
-when `Z` predicts `A` perfectly well. `estimate_cv()` checks this
-automatically and warns:
+when `Z` predicts `A` perfectly well. `estimate_cv()` and `compare_iv_cv()`
+check this automatically and warn:
 
 ```{r weak-loading}
 d_noload <- data.frame(A = rbinom(500, 1, 0.5), Z = rnorm(500),

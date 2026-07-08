@@ -21,6 +21,11 @@
 #'   heteroskedasticity-robust just-identified IV standard error, taken from
 #'   the diagonal of the same GMM sandwich used by [compare_iv_cv()]. Default
 #'   `FALSE` returns the point estimate only.
+#' @param cluster Optional cluster identifier (column name in `data` or a
+#'   vector of length `nrow(data)`), e.g. school. When supplied and
+#'   `se = TRUE`, a cluster-robust standard error is returned. The point
+#'   estimate is unaffected. With few clusters (roughly G < 40) the
+#'   cluster-robust SE can be optimistic (Cameron & Miller, 2015).
 #'
 #' @return A numeric scalar (the IV estimate), or a named vector
 #'   `c(estimate, se)` when `se = TRUE`.
@@ -31,8 +36,10 @@
 #' estimate_iv(d, "Y", "P", "A", "Z", se = TRUE)
 #' @export
 estimate_iv <- function(data, outcome, pretest, treat, instrument,
-                        covariates = NULL, weights = NULL, se = FALSE) {
-  prep <- .ivc_prepare(data, outcome, pretest, treat, instrument, covariates, weights)
+                        covariates = NULL, weights = NULL, se = FALSE,
+                        cluster = NULL) {
+  prep <- .ivc_prepare(data, outcome, pretest, treat, instrument,
+                       covariates, weights, cluster = cluster)
   est <- .ivc_estimates(prep)
   if (!isTRUE(se)) return(unname(est["tau_IV"]))
   s <- .ivc_mom_se(prep, est)$se_params["tau_IV"]
@@ -66,7 +73,9 @@ estimate_iv <- function(data, outcome, pretest, treat, instrument,
 #'   `se = TRUE`, the moment contributions are summed within clusters before
 #'   forming the sandwich "meat", yielding cluster-robust standard errors that
 #'   allow arbitrary within-cluster dependence (Lee & Kim, 2026, JEEV 39(2),
-#'   eq. 42-44). The point estimate is unaffected.
+#'   eq. 42-44). The point estimate is unaffected. With few clusters (roughly
+#'   G < 40) the cluster-robust SE can be optimistic (Cameron & Miller, 2015);
+#'   no finite-sample degrees-of-freedom correction is applied.
 #' @param weak_loading_warn Threshold on the |z| statistic of the compass
 #'   loading denominator \eqn{\mathrm{cov}(P, Z \mid A)} below which a warning
 #'   about an unstable ratio \eqn{\widehat{\delta}} is issued. Default `2`.
@@ -135,7 +144,13 @@ estimate_cv <- function(data, outcome, pretest, treat, instrument,
 #' @param cluster Optional cluster identifier (column name or vector), e.g.
 #'   school. With `se = "mom"` a cluster-robust sandwich is used; with
 #'   `se = "bootstrap"` whole clusters are resampled (Lee & Kim, 2026,
-#'   JEEV 39(2)). Point estimates are unaffected.
+#'   JEEV 39(2)). Point estimates are unaffected. With few clusters (roughly
+#'   G < 40) the cluster-robust SE can be optimistic (Cameron & Miller, 2015);
+#'   no finite-sample degrees-of-freedom correction is applied.
+#' @param weak_loading_warn Threshold on the |z| statistic of the compass
+#'   loading denominator \eqn{\mathrm{cov}(P, Z \mid A)} below which a warning
+#'   about an unstable ratio \eqn{\widehat{\delta}} is issued. Default `2`.
+#'   Set to `0` to disable. See [estimate_cv()].
 #'
 #' @return An object of class `"ivc"`: a list with elements `tau_IV`,
 #'   `tau_comp`, `delta_hat`, `Delta`, `se`, `ci` (length-2 vector),
@@ -153,7 +168,7 @@ compare_iv_cv <- function(data, outcome, pretest, treat, instrument,
                           covariates = NULL, weights = NULL,
                           se = c("bootstrap", "mom"),
                           level = 0.95, n_boot = 2000, seed = NULL,
-                          cluster = NULL) {
+                          cluster = NULL, weak_loading_warn = 2) {
   se <- match.arg(se)
   cl <- match.call()
   prep <- .ivc_prepare(data, outcome, pretest, treat, instrument,
@@ -162,6 +177,16 @@ compare_iv_cv <- function(data, outcome, pretest, treat, instrument,
   if (any(!is.finite(est))) {
     stop("Estimates are not finite (instrument too weak or relevance collapses).",
          call. = FALSE)
+  }
+  # v0.2.1: the main diagnostic entry point now performs the same weak-loading
+  # regularity check as estimate_cv(); previously only the helper warned.
+  if (weak_loading_warn > 0) {
+    lz <- .ivc_loading_z(prep)
+    if (is.finite(lz) && abs(lz) < weak_loading_warn) {
+      warning(sprintf(paste0("weak compass loading: |z| = %.2f for cov(P, Z | A). ",
+                             "The ratio delta_hat, tau_comp, and Delta may be unstable."),
+                      abs(lz)), call. = FALSE)
+    }
   }
   Delta <- unname(est["Delta"])
   z_crit <- stats::qnorm(1 - (1 - level) / 2)
