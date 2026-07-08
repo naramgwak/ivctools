@@ -124,7 +124,50 @@ pretest, treatment, and instrument are residualized on the covariates before
 the estimators are applied. With neither `covariates` nor `weights`, the
 results reduce **exactly** to the covariate-free forms.
 
-## 7. How the estimates and standard errors are computed
+## 7. Multilevel data: cluster-robust inference
+
+Educational data are often nested: students within schools, employees within
+firms. If the treatment (or an omitted factor correlated with it) operates at
+the cluster level, observations within a cluster are not independent, and
+standard errors computed under an independence assumption can be badly
+understated.
+
+Pass `cluster = ` (a column name or a vector of cluster IDs) to `estimate_cv()`
+or `compare_iv_cv()` to get cluster-robust standard errors instead. The point
+estimates never change -- only how the standard error is computed.
+
+```{r cluster-sim}
+set.seed(1)
+n_school <- 40
+m        <- 25
+school   <- rep(seq_len(n_school), each = m)
+n        <- length(school)
+
+Zs <- rnorm(n_school)                            # school-level component of Z
+Us <- rnorm(n_school)                            # school-level confound
+Gs <- rbinom(n_school, 1, plogis(1.5 * Zs))      # Z predicts school-level adoption
+A  <- Gs[school]
+U  <- Us[school] + rnorm(n)                       # confound: school part + individual part
+Z  <- Zs[school] + 0.5 * rnorm(n)
+P  <- 1.2 * U + rnorm(n)
+Y  <- 0.5 * A + 1.2 * U + Us[school] + rnorm(n)   # an extra school-level factor in Y
+d_school <- data.frame(A, Z, P, Y, school)
+
+# Ignoring the school structure understates the SE here, because both the
+# treatment and part of the outcome operate at the school level.
+estimate_cv(d_school, "Y", "P", "A", "Z", se = TRUE)
+estimate_cv(d_school, "Y", "P", "A", "Z", se = TRUE, cluster = "school")
+```
+
+`compare_iv_cv()` accepts the same argument for both `se = "mom"` (a
+cluster-robust sandwich) and `se = "bootstrap"` (whole clusters are
+resampled together rather than individual rows):
+
+```{r cluster-compare}
+compare_iv_cv(d_school, "Y", "P", "A", "Z", se = "mom", cluster = "school")
+```
+
+## 8. How the estimates and standard errors are computed
 
 This section is for readers who want to know exactly what runs.
 
@@ -145,16 +188,23 @@ share one covariance matrix, the individual SEs and the `Delta` SE are mutually
 consistent. For `tau_IV` this SE equals the heteroskedasticity-robust (HC0)
 standard error of a just-identified IV estimator.
 
+When `cluster = ` is supplied, the same three moment conditions are summed
+within each cluster before the sandwich is formed, so the "meat" of the
+sandwich reflects between-cluster variation rather than between-observation
+variation. This is a change to the covariance estimate only; the moment
+conditions, and therefore the point estimates, are untouched.
+
 For `Delta` you may instead request a **bootstrap** interval (`se =
 "bootstrap"`), which resamples rows and recomputes `Delta`. The analytic and
-bootstrap SEs agree up to Monte Carlo error.
+bootstrap SEs agree up to Monte Carlo error. With `cluster = `, the bootstrap
+resamples whole clusters instead of rows.
 
 ```{r bootstrap}
 compare_iv_cv(ivc_example, "Y", "P", "A", "Z",
               se = "bootstrap", n_boot = 2000, seed = 1)
 ```
 
-## 8. A caution: weak instruments
+## 9. A caution: weak instruments
 
 The diagnostic needs a **relevant** instrument. If `Z` barely moves `A`, the
 correction becomes unstable and the standard errors blow up, so `Delta` will
@@ -171,7 +221,57 @@ is only informative when the instrument is relevant. Check instrument strength
 (e.g. the first-stage relationship between `Z` and `A`) before trusting a
 non-rejection.
 
-## 9. Planning a study
+This is a different failure mode from a **weak compass loading**. Instrument
+relevance is about `Z`'s relationship to `A`; the compass loading is about
+`Z`'s relationship to `P` *conditional on* `A` -- the denominator of
+`delta_hat`. If that conditional relationship is too weak to distinguish from
+zero, `delta_hat` (and therefore `tau_comp`) becomes an unstable ratio even
+when `Z` predicts `A` perfectly well. `estimate_cv()` checks this
+automatically and warns:
+
+```{r weak-loading}
+d_noload <- data.frame(A = rbinom(500, 1, 0.5), Z = rnorm(500),
+                       P = rnorm(500), Y = rnorm(500))  # Z unrelated to P given A
+estimate_cv(d_noload, "Y", "P", "A", "Z")
+```
+
+Set `weak_loading_warn = 0` to silence this check, or raise the `|z|`
+threshold (default `2`) to make it more conservative.
+
+## 10. Choosing a compass variable: the conditional local independence test
+
+Both `estimate_cv()` and `compare_iv_cv()` *assume* that `Z` is a valid
+compass: that conditional on the treatment and the (unobserved) confounder,
+`Z` is independent of both the pretest and the posttest. That assumption is
+not directly testable with a single candidate variable. If you have **two or
+more** candidate compass variables, `ivc_cli_test()` checks a testable
+implication of that assumption -- a vanishing tetrad -- separately within each
+treatment level, following Lee & Kim (2026, *Journal of Educational
+Evaluation*, 39(1)).
+
+```{r cli-sim}
+set.seed(4)
+n <- 2000
+U  <- rnorm(n)
+G  <- rbinom(n, 1, plogis(U))
+P  <- 0.5 * U + rnorm(n)
+Y  <- 0.5 * G + 0.5 * U + rnorm(n)
+C1 <- 0.5 * U + rnorm(n)   # a plausible compass candidate
+C2 <- 0.5 * U + rnorm(n)   # a second, independent candidate
+d_cli <- data.frame(G, P, Y, C1, C2)
+
+ivc_cli_test(d_cli, pretest = "P", posttest = "Y", treat = "G",
+            compass = c("C1", "C2"))
+```
+
+A rejection means the four variables `(P, Y, C1, C2)` are jointly
+inconsistent with the assumption -- but, as with any global specification
+test, it cannot say *which* candidate is at fault. With three or more
+candidates, every pair is tested; comparing the resulting `p_adj` values
+across pairs is a reasonable way to screen for the pair with the weakest
+evidence against the assumption before it is passed to `estimate_cv()`.
+
+## 11. Planning a study
 
 Before committing to an instrument, you can ask whether a given design could
 even detect a violation, using `ivc_power()`.

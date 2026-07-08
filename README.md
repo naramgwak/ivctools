@@ -52,6 +52,7 @@ plot(fit)
 | `estimate_iv()`    | Conventional IV (Wald) estimate τ̂_IV |
 | `estimate_cv()`    | Compass-corrected estimate τ̂_comp (and loading ratio δ̂) |
 | `compare_iv_cv()`  | The IVC diagnostic: Δ with bootstrap or analytic MoM inference |
+| `ivc_cli_test()`   | Conditional local independence (tetrad) test for candidate compass variables |
 | `ivc_power()`      | Simulation-based power / Type-I-error analysis |
 | `ivc_simulate()`   | Data-generating process for the single-factor model |
 | `plot()` / `ivc_plot()` | Visualize the two estimates and the contrast |
@@ -59,6 +60,12 @@ plot(fit)
 Covariates and survey weights are supported in the estimators via
 Frisch–Waugh–Lovell partialling (`covariates = `, `weights = `); with neither,
 the estimators reduce exactly to the covariate-free forms.
+
+For data with a natural grouping (e.g. students nested in schools), pass
+`cluster = ` to `estimate_cv()` or `compare_iv_cv()` for cluster-robust
+standard errors (analytic or bootstrap); point estimates are unaffected.
+`estimate_cv()` also warns by default when the compass loading is too weak
+for the correction (and its SE) to be trustworthy.
 
 ## Interpretation
 
